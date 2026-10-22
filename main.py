@@ -1,13 +1,62 @@
 from datetime import datetime, timedelta
+import urllib.parse
 import zoneinfo
 import pandas as pd
 import requests
 import streamlit as st
 
 # 페이지 기본 설정
-st.set_page_config(page_title="박스오피스 탐색기", layout="wide")
+st.set_page_config(
+    page_title="박스오피스 탐색기", layout="wide", initial_sidebar_state="expanded"
+)
 
-st.title("🎬 KOBIS 일별 박스오피스 탐색기")
+# 0. 다크모드 전환 스위치 (오른쪽 위 상단)
+# Streamlit의 Session State를 활용하여 라이트/다크모드 CSS를 동적으로 전환합니다.
+if "theme_mode" not in st.session_state:
+    st.session_state["theme_mode"] = "dark"  # 기본값: 다크모드
+
+top_col1, top_col2 = st.columns([8, 2])
+with top_col1:
+    st.title("🎬 KOBIS 일별 박스오피스 탐색기")
+with top_col2:
+    mode_toggle = st.toggle("🌙 다크모드", value=st.session_state["theme_mode"] == "dark")
+    st.session_state["theme_mode"] = "dark" if mode_toggle else "light"
+
+# 선택된 모드에 맞춰 커스텀 스타일(CSS) 적용
+if st.session_state["theme_mode"] == "dark":
+    st.markdown(
+        """
+        <style>
+            .stApp {
+                background-color: #0E1117;
+                color: #FFFFFF;
+            }
+            .stMetric {
+                background-color: #1E222B;
+                padding: 15px;
+                border-radius: 10px;
+            }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+else:
+    st.markdown(
+        """
+        <style>
+            .stApp {
+                background-color: #FFFFFF;
+                color: #000000;
+            }
+            .stMetric {
+                background-color: #F0F2F6;
+                padding: 15px;
+                border-radius: 10px;
+            }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 # 1. 한국 표준시(KST) 기준 날짜 계산
@@ -66,29 +115,32 @@ def fetch_box_office(api_key, target_dt):
         return None, f"네트워크 통신 중 오류가 발생했습니다: {e}"
 
 
-# 4. 영화 포스터 URL 검색 함수 (TMDB API / 공개 검색)
+# 4. 영화 포스터 URL 불러오기 (개선된 하이브리드 검색 방식)
 @st.cache_data(ttl=86400)
 def fetch_poster_url(movie_name):
-    """영화 제목을 검색하여 첫 번째 대표 포스터 이미지 URL을 반환합니다."""
-    # TMDB Search API (공개 검색 키 적용)
+    # 특수문자 제거 후 순수 영화 제목 추출
+    clean_name = movie_name.split("(")[0].strip()
+
+    # 1차: TMDB API 검색
     tmdb_url = "https://api.themoviedb.org/3/search/movie"
     params = {
-        "api_key": "15d2ea6d0dc1d476efbca3ecc92b2624",  # TMDB Public Open Key
-        "query": movie_name,
+        "api_key": "15d2ea6d0dc1d476efbca3ecc92b2624",
+        "query": clean_name,
         "language": "ko-KR",
     }
     try:
-        res = requests.get(tmdb_url, params=params, timeout=5)
+        res = requests.get(tmdb_url, params=params, timeout=3)
         if res.status_code == 200:
             results = res.json().get("results", [])
-            if results and results[0].get("poster_path"):
-                poster_path = results[0]["poster_path"]
-                return f"https://image.tmdb.org/t/p/w500{poster_path}"
+            for item in results:
+                if item.get("poster_path"):
+                    return f"https://image.tmdb.org/t/p/w500{item['poster_path']}"
     except Exception:
         pass
 
-    # 포스터를 찾지 못한 경우 기본 대체 이미지 표시
-    return "https://via.placeholder.com/300x450?text=No+Poster"
+    # 2차: 대체 이미지 (커스텀 영화 플레이스홀더 포스터)
+    encoded_title = urllib.parse.quote(clean_name)
+    return f"https://placehold.co/300x450/222222/FFFFFF/png?text={encoded_title}"
 
 
 # 5. API 키 검증
@@ -144,7 +196,7 @@ def format_rank_inten(val):
 
 df["rankInten_display"] = df["rankInten"].apply(format_rank_inten)
 
-# 8. 1위 영화 지표 카드 (Metrics)
+# 8. 1위 영화 지표 카드
 top_movie = df.iloc[0]
 
 st.markdown("---")
@@ -206,7 +258,6 @@ st.markdown("---")
 
 # 11. 맨 아래: 순위별 영화 포스터 (1위~5위 / 6위~10위)
 st.subheader("🖼️ 박스오피스 Top 10 영화 포스터")
-st.caption("실시간으로 검색된 각 영화의 첫 번째 대표 메인 포스터입니다.")
 
 # 1위 ~ 5위 포스터 (첫 번째 줄)
 st.markdown("#### 🔝 1위 ~ 5위")
